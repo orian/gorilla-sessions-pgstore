@@ -8,7 +8,7 @@ A session store backend for [gorilla/sessions](http://www.gorillatoolkit.org/pkg
 
 ## Documentation
 
-Available on [godoc.org](http://www.godoc.org/github.com/antonlindstrom/pgstore).
+Available on [godoc.org](http://www.godoc.org/github.com/orian/gorilla-sessions-pgstore).
 
 See http://www.gorillatoolkit.org/pkg/sessions for full documentation on underlying interface.
 
@@ -23,7 +23,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/antonlindstrom/pgstore"
+	"github.com/orian/pgstore"
+	_ "github.com/lib/pq"
 )
 
 // ExampleHandler is an example that displays the usage of PGStore.
@@ -62,12 +63,16 @@ func ExampleHandler(w http.ResponseWriter, r *http.Request) {
 
 ## Breaking changes
 
+* 2019-08-03 - Removed `pq` from direct dependencies, it's a caller
+responsibility to import to import Postgre's driver.
 * 2016-07-19 - `NewPGStore` and `NewPGStoreFromPool` now returns `(*PGStore, error)`
 
 ## Thanks
 
-I've stolen, borrowed and gotten inspiration from the other backends available:
+This repo is based on:
 
+* [pgstore](https://github.com/antonlindstrom/pgstore) - base repo I've forked this from, thank you
+[Anton Lindström](https://github.com/antonlindstrom).
 * [redistore](https://github.com/boj/redistore)
 * [mysqlstore](https://github.com/srinathgs/mysqlstore)
 * [babou dbstore](https://github.com/drbawb/babou/blob/master/lib/session/dbstore.go)

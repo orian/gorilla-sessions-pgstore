@@ -2,18 +2,13 @@ package pgstore
 
 import (
 	"database/sql"
-	"encoding/base32"
+	"encoding/base64"
 	"net/http"
-	"strings"
 	"time"
-
-	"github.com/pkg/errors"
 
 	"github.com/gorilla/securecookie"
 	"github.com/gorilla/sessions"
-
-	// Include the pq postgres driver.
-	_ "github.com/lib/pq"
+	"github.com/pkg/errors"
 )
 
 // PGStore represents the currently configured session store.
@@ -68,8 +63,8 @@ func NewPGStoreFromPool(db *sql.DB, keyPairs ...[]byte) (*PGStore, error) {
 }
 
 // Close closes the database connection.
-func (db *PGStore) Close() {
-	db.DbPool.Close()
+func (db *PGStore) Close() error {
+	return db.DbPool.Close()
 }
 
 // Get Fetches a session for a given name after it has been added to the
@@ -120,10 +115,8 @@ func (db *PGStore) Save(r *http.Request, w http.ResponseWriter, session *session
 
 	if session.ID == "" {
 		// Generate a random session ID key suitable for storage in the DB
-		session.ID = strings.TrimRight(
-			base32.StdEncoding.EncodeToString(
-				securecookie.GenerateRandomKey(32),
-			), "=")
+		session.ID = base64.RawURLEncoding.EncodeToString(
+			securecookie.GenerateRandomKey(32))
 	}
 
 	if err := db.save(session); err != nil {
@@ -221,20 +214,16 @@ func (db *PGStore) save(session *sessions.Session) error {
 	return db.update(&s)
 }
 
-// Delete session
-func (db *PGStore) destroy(session *sessions.Session) error {
-	_, err := db.DbPool.Exec("DELETE FROM http_sessions WHERE key = $1", session.ID)
-	return err
-}
-
 func (db *PGStore) createSessionsTable() error {
 	stmt := `CREATE TABLE IF NOT EXISTS http_sessions (
-              id BIGSERIAL PRIMARY KEY,
-              key BYTEA,
-              data BYTEA,
-              created_on TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-              modified_on TIMESTAMPTZ,
-              expires_on TIMESTAMPTZ);`
+		id BIGSERIAL PRIMARY KEY,
+		key BYTEA NOT NULL,
+		data BYTEA NOT NULL,
+		created_on TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		modified_on TIMESTAMPTZ NOT NULL,
+		expires_on TIMESTAMPTZ NOT NULL);
+	CREATE INDEX IF NOT EXISTS http_sessions_expiry_idx ON http_sessions (expires_on);
+	CREATE INDEX IF NOT EXISTS http_sessions_key_idx ON http_sessions (key);`
 
 	_, err := db.DbPool.Exec(stmt)
 	if err != nil {
@@ -244,9 +233,15 @@ func (db *PGStore) createSessionsTable() error {
 	return nil
 }
 
+const (
+	selectSession = `SELECT id, key, data, created_on, modified_on, expires_on FROM http_sessions WHERE key = $1`
+	insertSession = `INSERT INTO http_sessions (key, data, created_on, modified_on, expires_on) VALUES ($1, $2, $3, $4, $5)`
+	deleteSession = "DELETE FROM http_sessions WHERE key = $1"
+	updateSession = `UPDATE http_sessions SET data=$1, modified_on=$2, expires_on=$3 WHERE key = $4`
+)
+
 func (db *PGStore) selectOne(s *PGSession, key string) error {
-	stmt := "SELECT id, key, data, created_on, modified_on, expires_on FROM http_sessions WHERE key = $1"
-	err := db.DbPool.QueryRow(stmt, key).Scan(&s.ID, &s.Key, &s.Data, &s.CreatedOn, &s.ModifiedOn, &s.ExpiresOn)
+	err := db.DbPool.QueryRow(selectSession, key).Scan(&s.ID, &s.Key, &s.Data, &s.CreatedOn, &s.ModifiedOn, &s.ExpiresOn)
 	if err != nil {
 		return errors.Wrapf(err, "Unable to find session in the database")
 	}
@@ -255,16 +250,17 @@ func (db *PGStore) selectOne(s *PGSession, key string) error {
 }
 
 func (db *PGStore) insert(s *PGSession) error {
-	stmt := `INSERT INTO http_sessions (key, data, created_on, modified_on, expires_on)
-           VALUES ($1, $2, $3, $4, $5)`
-	_, err := db.DbPool.Exec(stmt, s.Key, s.Data, s.CreatedOn, s.ModifiedOn, s.ExpiresOn)
-
+	_, err := db.DbPool.Exec(insertSession, s.Key, s.Data, s.CreatedOn, s.ModifiedOn, s.ExpiresOn)
 	return err
 }
 
 func (db *PGStore) update(s *PGSession) error {
-	stmt := `UPDATE http_sessions SET data=$1, modified_on=$2, expires_on=$3 WHERE key=$4`
-	_, err := db.DbPool.Exec(stmt, s.Data, s.ModifiedOn, s.ExpiresOn, s.Key)
+	_, err := db.DbPool.Exec(updateSession, s.Data, s.ModifiedOn, s.ExpiresOn, s.Key)
 
+	return err
+}
+
+func (db *PGStore) destroy(session *sessions.Session) error {
+	_, err := db.DbPool.Exec(deleteSession, session.ID)
 	return err
 }
